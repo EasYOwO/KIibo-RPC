@@ -1,6 +1,5 @@
 package jp.jaxa.iss.kibo.rpc.sampleapk;
 
-
 import jp.jaxa.iss.kibo.rpc.api.KiboRpcService;
 import android.util.Log;
 import gov.nasa.arc.astrobee.types.Point;
