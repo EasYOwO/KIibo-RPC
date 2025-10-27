@@ -1,0 +1,19 @@
+package jp.jaxa.iss.kibo.rpc.sampleapk;
+
+import org.opencv.core.Mat;
+
+public class DetectionResult {
+   public String landmarkItem;
+   public int group1Count;
+   public int group2ClassId;
+   public boolean group2Detected;
+   public Mat image_warped;
+
+   public DetectionResult(String landmarkItem, int group1Count, int group2ClassId, boolean group2Detected,Mat image_warped) {
+       this.landmarkItem = landmarkItem;
+       this.group1Count = group1Count;
+       this.group2ClassId = group2ClassId;
+       this.group2Detected = group2Detected;
+       this.image_warped = image_warped;
+   }
+}
