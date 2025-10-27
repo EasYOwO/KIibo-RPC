@@ -1,0 +1,44 @@
+package jp.jaxa.iss.kibo.rpc.sampleapk;
+
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+
+public class ImageUtils {
+
+   public static float[][][][] preprocessImage(Bitmap src) {
+       //int targetSize = 640;
+       int width_of_model = 416;
+       int height_of_model = 320;
+       // 1. 保持比例缩放
+       int srcWidth = src.getWidth();
+       int srcHeight = src.getHeight();
+       float ratio = Math.min((float) width_of_model / srcWidth, (float) height_of_model / srcHeight);
+       int newWidth = Math.round(srcWidth * ratio);
+       int newHeight = Math.round(srcHeight * ratio);
+       Bitmap resized = Bitmap.createScaledBitmap(src, newWidth, newHeight, true);
+       Bitmap padded = Bitmap.createBitmap(width_of_model, height_of_model, Bitmap.Config.ARGB_8888);
+       Canvas canvas = new Canvas(padded);
+       canvas.drawColor(Color.GRAY);
+       int offsetX = (width_of_model - newWidth) / 2;
+       int offsetY = (height_of_model - newHeight) / 2;
+       canvas.drawBitmap(resized, offsetX, offsetY, null);
+
+
+       float[][][][] input = new float[1][height_of_model][width_of_model][3];
+       int[] pixels = new int[width_of_model * height_of_model];
+       padded.getPixels(pixels, 0, width_of_model, 0, 0, width_of_model, height_of_model);
+
+       for (int y = 0; y < height_of_model; y++) {
+           for (int x = 0; x < width_of_model; x++) {
+               int pixel = pixels[y * width_of_model + x];
+               input[0][y][x][0] = ((pixel >> 16) & 0xFF) / 255.0f; // R
+               input[0][y][x][1] = ((pixel >> 8) & 0xFF) / 255.0f;  // G
+               input[0][y][x][2] = (pixel & 0xFF) / 255.0f;         // B
+           }
+       }
+
+       return input;
+   }
+}
+
