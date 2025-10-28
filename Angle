@@ -1,0 +1,52 @@
+package jp.jaxa.iss.kibo.rpc.sampleapk;
+
+import org.opencv.calib3d.Calib3d;
+
+import org.opencv.core.CvType;
+import org.opencv.core.Mat;
+
+import android.util.Log;
+
+public class Angle {
+    public static double[] getdistance(double[] rvecArr, double[] tvecArr) {
+        if (rvecArr == null || tvecArr == null || rvecArr.length != 3 || tvecArr.length != 3) {
+            Log.w("Angle", "Invalid input vectors.");
+            return new double[]{0.0, 0.0};
+        }
+
+        // 转换 rvecs 和 tvecs 为 3×1 的 Mat 类型
+        Mat rvecs1 = new Mat(3, 1, CvType.CV_64F);
+        rvecs1.put(0, 0, rvecArr);
+
+        Mat tvecs1 = new Mat(3, 1, CvType.CV_64F);
+        tvecs1.put(0, 0, tvecArr);
+
+        // 计算旋转矩阵 R
+        Mat R = new Mat();
+        Calib3d.Rodrigues(rvecs1, R);
+
+        if (R.rows() != 3 || R.cols() != 3) {
+            Log.w("Angle", "Invalid rotation matrix.");
+            return new double[]{0.0, 0.0};
+        }
+
+        // 提取 theta (绕Z轴旋转角)
+        double theta = Math.atan2(R.get(1, 0)[0], R.get(0, 0)[0]);
+
+        // 提取原始 tvec x/y 值
+        double x = tvecArr[0];
+        double y = tvecArr[1];
+
+        // 坐标对齐
+        double cosTheta = Math.cos(-theta);
+        double sinTheta = Math.sin(-theta);
+        double x_aligned = x * cosTheta - y * sinTheta;
+        double y_aligned = x * sinTheta + y * cosTheta;
+
+        Log.i("Angle", String.format("Aligned: (%.2f, %.2f) | θ = %.1f°", x_aligned, y_aligned, Math.toDegrees(theta)));
+
+        return new double[]{x_aligned, y_aligned};
+    }
+
+}
+
