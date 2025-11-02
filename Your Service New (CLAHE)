@@ -1,0 +1,284 @@
+package jp.jaxa.iss.kibo.rpc.malaysia;
+
+import jp.jaxa.iss.kibo.rpc.api.KiboRpcService;
+import android.util.Log;
+
+import gov.nasa.arc.astrobee.types.Point;
+import gov.nasa.arc.astrobee.types.Quaternion;
+
+import org.opencv.core.CvType;
+import org.opencv.core.Mat;
+import org.opencv.core.MatOfDouble;
+import org.opencv.core.Core;
+import org.opencv.core.Size;
+import org.opencv.imgproc.Imgproc;
+import org.opencv.imgproc.CLAHE;
+
+public class YourService extends KiboRpcService {
+
+    public boolean waitUntilLinearStopped() {
+        long start = System.currentTimeMillis();
+        long timeoutMillis = 3000;
+        double threshold = 0.012;
+
+        while (System.currentTimeMillis() - start < timeoutMillis) {
+            double[] linear = api.getRobotKinematics().getLinearVelocity().toArray();
+            double magnitude = Math.sqrt(linear[0]*linear[0] + linear[1]*linear[1] + linear[2]*linear[2]);
+            Log.i("YourService", "Linear magnitude: " + magnitude);
+            if (magnitude < threshold) return true;
+            try { Thread.sleep(50); } catch (InterruptedException e) {
+                Log.e("YourService", "Interrupted during linear stop wait", e);
+                return false;
+            }
+        }
+        Log.w("YourService", "Timeout waiting for linear stop");
+        return false;
+    }
+
+    public boolean waitUntilAngularStopped() {
+        long start = System.currentTimeMillis();
+        long timeoutMillis = 3000;
+        double threshold = 0.012;
+
+        while (System.currentTimeMillis() - start < timeoutMillis) {
+            double[] angular = api.getRobotKinematics().getAngularVelocity().toArray();
+            double magnitude = Math.sqrt(angular[0]*angular[0] + angular[1]*angular[1] + angular[2]*angular[2]);
+            Log.i("YourService", "Angular magnitude: " + magnitude);
+            if (magnitude < threshold) return true;
+            try { Thread.sleep(50); } catch (InterruptedException e) {
+                Log.e("YourService", "Interrupted during angular stop wait", e);
+                return false;
+            }
+        }
+        Log.w("YourService", "Timeout waiting for angular stop");
+        return false;
+    }
+
+    private final String INFO = this.getClass().getSimpleName();
+
+    // —— 防过暗的稳定取图：开 0.01f → 连拍取 max → 必要时轻度增益 + CLAHE ——
+    private Mat captureBrightNavCam() {
+        api.flashlightControlFront(0.01f);
+        sleepQuiet(1200);
+
+        Mat f1 = api.getMatNavCam();           // 灰度 CV_8UC1
+        sleepQuiet(120);
+        Mat f2 = api.getMatNavCam();
+
+        if (f1 == null || f1.empty()) return f2;
+        if (f2 == null || f2.empty()) return f1;
+
+        Mat fused = new Mat();
+        Core.max(f1, f2, fused);
+
+        double mean = Core.mean(fused).val[0];
+
+        if (mean < 40.0) {
+            Mat gain = new Mat();
+            fused.convertTo(gain, -1, 1.35, 0); // alpha=1.35, beta=0
+            CLAHE clahe = Imgproc.createCLAHE(2.0, new Size(8,8));
+            Mat enhanced = new Mat();
+            clahe.apply(gain, enhanced);
+            gain.release();
+            fused.release();
+            api.flashlightControlFront(0f);
+            sleepQuiet(120);
+            return enhanced;
+        } else {
+            api.flashlightControlFront(0f);
+            sleepQuiet(120);
+            return fused;
+        }
+    }
+
+    private void sleepQuiet(long ms) { try { Thread.sleep(ms); } catch (InterruptedException ignored) {} }
+
+    @Override
+    protected void runPlan1() {
+
+        Log.i(INFO, "start mission");
+        api.startMission();
+
+        Point[] Points = new Point[]{
+                new Point(10.925d, -9.55d, 4.93d),   // A1
+                new Point(10.9d,   -8.25d, 5.25d),   // A2
+                new Point(10.925d, -7.925d,5.25d),   // A3
+                new Point(11.3d,   -6.95d, 4.9d),    // A4
+                new Point(-0.15d,   0d,    0d)       // 备用
+        };
+        Quaternion[] Quas = new Quaternion[]{
+                new Quaternion(0f, 0f, -0.707f, 0.707f),
+                new Quaternion(0f, 0.707f, 0f, 0.707f),
+                new Quaternion(0f, 0.707f, 0f, 0.707f),
+                new Quaternion(0f, 1f, 0f, 0f),
+                new Quaternion(0.707f, 0.707f, 0f, 0f),
+        };
+
+        int[] tressureid = new int[4];
+
+        Mat cameramatrix = new Mat(3, 3, CvType.CV_64F);
+        cameramatrix.put(0, 0, api.getNavCamIntrinsics()[0]);
+        double[] distCoeffsArray = api.getNavCamIntrinsics()[1];
+        MatOfDouble cameracoefficient = new MatOfDouble(distCoeffsArray);
+
+        Mat image1 = new Mat();
+        Mat image2 = new Mat();
+        Mat image3 = new Mat();
+
+        // ===== A1 =====
+        api.moveTo(Points[0], Quas[0], true);
+        boolean stopped1 = waitUntilLinearStopped()&&waitUntilAngularStopped();
+        if (stopped1) {
+            Log.i("YourService", "Robot is stopped. Proceeding...");
+            image1 = captureBrightNavCam();
+        } else {
+            Log.w("YourService", "Robot did not stop in time. Skipping...");
+        }
+        api.saveMatImage(image1, "A1.png");
+        DetectionResult result1 = ObjectDetection.runObjectDetection(getApplicationContext(),101,cameramatrix,cameracoefficient,image1);
+        api.saveMatImage(result1.image_warped, "A1_warped.png");
+        if (result1.group1Count > 0 && result1.landmarkItem != null && !result1.landmarkItem.isEmpty()) {
+            api.setAreaInfo(1, result1.landmarkItem, result1.group1Count);
+        } else {
+            Log.w(INFO, "Area1 no valid detection; skip setAreaInfo(1)");
+        }
+        tressureid[0] = result1.group2ClassId;
+        double[] rvecs_1 = result1.rvecsArr;
+        double[] tvecs_1 = result1.tvecsArr;
+        double[] aligned_1 = Angle.getdistance(rvecs_1, tvecs_1);
+        double x_aligned_1 = aligned_1[0];
+        double y_aligned_1 = aligned_1[1];
+
+        // ===== A2 =====
+        api.moveTo(Points[1], Quas[1], true);
+        boolean stopped2 = waitUntilLinearStopped()&&waitUntilAngularStopped();
+        if (stopped2) {
+            Log.i("YourService", "Robot is stopped. Proceeding...");
+            image2 = captureBrightNavCam();
+        } else {
+            Log.w("YourService", "Robot did not stop in time. Skipping...");
+        }
+        api.saveMatImage(image2, "A2.png");
+        DetectionResult result2 = ObjectDetection.runObjectDetection(getApplicationContext(),102,cameramatrix,cameracoefficient,image2);
+        api.saveMatImage(result2.image_warped, "A2_warped.png");
+        if (result2.group1Count > 0 && result2.landmarkItem != null && !result2.landmarkItem.isEmpty()) {
+            api.setAreaInfo(2, result2.landmarkItem, result2.group1Count);
+        } else {
+            Log.w(INFO, "Area2 no valid detection; skip setAreaInfo(2)");
+        }
+        tressureid[1] = result2.group2ClassId;
+        double[] rvecs_2 = result2.rvecsArr;
+        double[] tvecs_2 = result2.tvecsArr;
+        double[] aligned_2 = Angle.getdistance(rvecs_2, tvecs_2);
+        double x_aligned_2 = aligned_2[0];
+        double y_aligned_2 = aligned_2[1];
+
+        // ===== A3 =====
+        api.moveTo(Points[2], Quas[2], true);
+        boolean stopped2b = waitUntilLinearStopped() && waitUntilAngularStopped();
+        Mat image2b = new Mat();
+        if (stopped2b) {
+            Log.i("YourService", "Robot is stopped. Proceeding (A3)...");
+            image2b = captureBrightNavCam();
+        } else {
+            Log.w("YourService", "Robot did not stop in time at A3. Skipping...");
+        }
+        api.saveMatImage(image2b, "A3.png");
+        DetectionResult result3 = ObjectDetection.runObjectDetection(getApplicationContext(),103,cameramatrix,cameracoefficient,image2b);
+        api.saveMatImage(result3.image_warped, "A3_warped.png");
+        if (result3.group1Count > 0 && result3.landmarkItem != null && !result3.landmarkItem.isEmpty()) {
+            api.setAreaInfo(3, result3.landmarkItem, result3.group1Count);
+        } else {
+            Log.w(INFO, "Area3 no valid detection; skip setAreaInfo(3)");
+        }
+        tressureid[2] = result3.group2ClassId;
+        double[] rvecs_3 = result3.rvecsArr;
+        double[] tvecs_3 = result3.tvecsArr;
+        double[] aligned_3 = Angle.getdistance(rvecs_3, tvecs_3);
+        double x_aligned_3 = aligned_3[0];
+        double y_aligned_3 = aligned_3[1];
+
+        // ===== A4 =====
+        api.moveTo(Points[3], Quas[3], true);
+        boolean stopped3 = waitUntilLinearStopped()&&waitUntilAngularStopped();
+        if (stopped3) {
+            Log.i("YourService", "Robot is stopped. Proceeding...");
+            image3 = captureBrightNavCam();
+        } else {
+            Log.w("YourService", "Robot did not stop in time. Skipping...");
+        }
+        api.saveMatImage(image3, "A4.png");
+        DetectionResult result4 = ObjectDetection.runObjectDetection(getApplicationContext(),104,cameramatrix,cameracoefficient,image3);
+        api.saveMatImage(result4.image_warped, "A4_warped.png");
+        if (result4.group1Count > 0 && result4.landmarkItem != null && !result4.landmarkItem.isEmpty()) {
+            api.setAreaInfo(4, result4.landmarkItem, result4.group1Count);
+        } else {
+            Log.w(INFO, "Area4 no valid detection; skip setAreaInfo(4)");
+        }
+        tressureid[3] = result4.group2ClassId;
+        double[] rvecs_4 = result4.rvecsArr;
+        double[] tvecs_4 = result4.tvecsArr;
+        double[] aligned_4 = Angle.getdistance(rvecs_4, tvecs_4);
+        double x_aligned_4 = aligned_4[0];
+        double y_aligned_4 = aligned_4[1];
+
+        Log.i(INFO,"Area1"+x_aligned_1+y_aligned_1+"Area2"+x_aligned_2+y_aligned_2+"Area3"+x_aligned_3+y_aligned_3+"Area4"+x_aligned_4+y_aligned_4);
+        Log.i(INFO,"TRESSURE"+tressureid[0]+tressureid[1]+tressureid[2]+tressureid[3]);
+
+        api.reportRoundingCompletion();
+
+        Point[] Pointafter = new Point[]{
+                new Point(10.925d+y_aligned_1, -9.73d, 4.93d+x_aligned_1),
+                new Point(10.9d+x_aligned_2, -8.25d+y_aligned_2, 4.61d),
+                new Point(10.9d+x_aligned_3,-8.25d+y_aligned_3,4.61d),
+                new Point(10.716984d, -6.95d-y_aligned_4, 4.9d-x_aligned_4)
+        };
+
+        // A5（最终宝物确认）
+        api.moveTo(Points[3], Quas[4], true);
+        Mat image5 = captureBrightNavCam();
+        api.saveMatImage(image5, "A5.png");
+        DetectionResult result5 = ObjectDetection.runObjectDetection(getApplicationContext(),100,cameramatrix,cameracoefficient,image5);
+        api.saveMatImage(result5.image_warped, "A5_warped.png");
+        int finaltressureid = result5.group2ClassId;
+
+        boolean found = false;
+        for (int i = 0; i < 4; i++) {
+            Log.i("Pointafter", String.format("Point %d: (%.4f, %.4f, %.4f)", i,
+                    Pointafter[i].getX(), Pointafter[i].getY(), Pointafter[i].getZ()));
+
+            if (tressureid[i] == finaltressureid) {
+                Point Targetpoint = Pointafter[i];
+                Quaternion TargetQuas = Quas[i];
+                api.moveTo(Targetpoint,TargetQuas,true);
+                found = true;
+                Log.i(INFO,"TRESSURE"+tressureid[i]);
+                Log.i(INFO,"Final tressure"+tressureid);
+                Log.i("found?","successful");
+                break;
+            } else {
+                Log.i(INFO,"XTRESSURE"+tressureid[i]);
+                Log.i(INFO,"XFinal tressure"+tressureid);
+                Log.i("found?","x"+found+"#"+i);
+            }
+        }
+        if (!found){
+            if (tressureid[3]!=-1) {
+                api.moveTo(Pointafter[2], Quas[2], true);
+                Log.i("found?", "unsuccessful");
+            }else{
+                api.moveTo(Pointafter[3], Quas[3], true);
+                Log.i("found?", "unsuccessfulalso");
+            }
+        }
+        api.takeTargetItemSnapshot();
+    }
+
+    @Override
+    protected void runPlan2(){}
+
+    @Override
+    protected void runPlan3(){}
+
+    private String yourMethod(){ return "your method"; }
+}
