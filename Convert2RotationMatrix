@@ -1,0 +1,62 @@
+package jp.jaxa.iss.kibo.rpc.malaysia;
+
+import org.opencv.core.*;
+import gov.nasa.arc.astrobee.types.Point;
+import gov.nasa.arc.astrobee.types.Quaternion;
+import android.util.Log;
+
+public class Convert2RotationMatrix {
+    public static Mat quaternionToRotationMatrix(Quaternion Q) {
+        Mat R = new Mat(3, 3, CvType.CV_64F);
+        double x = Q.getX();
+        double y = Q.getY();
+        double z = Q.getZ();
+        double w = Q.getW();
+        double xx = x * x;
+        double yy = y * y;
+        double zz = z * z;
+        double xy = x * y;
+        double xz = x * z;
+        double yz = y * z;
+        double wx = w * x;
+        double wy = w * y;
+        double wz = w * z;
+
+        double[] data = {
+                1.0 - 2.0 * (yy + zz),  2.0 * (xy - wz),      2.0 * (xz + wy),
+                2.0 * (xy + wz),        1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx),
+                2.0 * (xz - wy),        2.0 * (yz + wx),      1.0 - 2.0 * (xx + yy)
+        };
+
+        R.put(0, 0, data);
+
+        double[] Rdata = new double[9];
+        R.get(0, 0, Rdata);
+        Log.i("RotationMatrix", String.format(
+                "R = [%.4f %.4f %.4f; %.4f %.4f %.4f; %.4f %.4f %.4f]",
+                Rdata[0], Rdata[1], Rdata[2],
+                Rdata[3], Rdata[4], Rdata[5],
+                Rdata[6], Rdata[7], Rdata[8]
+        )
+        );
+
+
+
+        return R;
+    }
+    public static Mat pointToMatrix(Point p){
+        Mat P = new Mat(3, 1, CvType.CV_64F);
+        double x = p.getX();
+        double y = p.getY();
+        double z = p.getZ();
+        double[] xyz = {x,y,z};
+        P.put(0,0,xyz);
+        return P;
+    }
+
+
+
+
+
+
+}
