@@ -1,5 +1,6 @@
-package jp.jaxa.iss.kibo.rpc.sampleapk;
+package jp.jaxa.iss.kibo.rpc.malaysia;
 
+import gov.nasa.arc.astrobee.types.Point;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.util.Log;
@@ -11,9 +12,12 @@ import org.opencv.core.Mat;
 import org.opencv.core.MatOfDouble;
 import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.MatOfPoint3f;
+import org.opencv.core.Core;
 import org.opencv.core.Point3;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
+import org.opencv.core.CvType;
+
 import org.tensorflow.lite.Interpreter;
 import org.tensorflow.lite.support.common.FileUtil;
 
@@ -22,145 +26,187 @@ import java.nio.MappedByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
+import gov.nasa.arc.astrobee.types.Quaternion;
+
 public class ObjectDetection {
-   public static DetectionResult runObjectDetection(Context context,
-                                                    int areamarkerid,
-                                                    Mat cameramatrix,
-                                                    MatOfDouble cameracoefficient,
-                                                    Mat image
-   ) {
+    public static DetectionResult runObjectDetection(Context context,
+                                                     int areamarkerid,
+                                                     Mat cameramatrix,
+                                                     MatOfDouble cameracoefficient,
+                                                     Mat image,
+                                                     Mat R,
+                                                     Mat P
+    ) {
 
 
-       Mat rvecs = new Mat();
-       Mat tvecs = new Mat();
-       double[] rvecArr = new double[3];
-       double[] tvecArr = new double[3];
-       float half = 0.025f;
-       int warpWidth = 640;
-       int warpHeight = 480;
-       MatOfPoint3f objectPoints = new MatOfPoint3f(
-               new Point3(-half - 0.2258, half + 0.020625, 0),  // 左上
-               new Point3(-half - 0.0108, half + 0.020625, 0),  // 右上
-               new Point3(-half - 0.0108, -half - 0.090625, 0),  // 右下
-               new Point3(-half - 0.2258, -half - 0.090625, 0)   // 左下
-       );
-       MatOfPoint2f imagePoints = new MatOfPoint2f();
-       MatOfPoint2f targetPoints = new MatOfPoint2f(
-               new org.opencv.core.Point(0, 0),
-               new org.opencv.core.Point(warpWidth - 1, 0),
-               new org.opencv.core.Point(warpWidth - 1, warpHeight - 1),
-               new org.opencv.core.Point(0, warpHeight - 1)
-       );
-       Mat image_warped = new Mat();
-       List<Mat> corners = new ArrayList<>();
-       Mat markerid = new Mat();
-       Dictionary dictionary = Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250);
+        Mat rvecs = new Mat();
+        Mat tvecs = new Mat();
+        double[] rvecArr = new double[3];
+        double[] tvecArr = new double[3];
+        float half = 0.025f;
+        int warpWidth = 640;
+        int warpHeight = 480;
+        MatOfPoint3f objectPoints = new MatOfPoint3f(
+                new Point3(-half - 0.2258, half + 0.020625, 0),  // 左上
+                new Point3(-half - 0.0108, half + 0.020625, 0),  // 右上
+                new Point3(-half - 0.0108, -half - 0.090625, 0),  // 右下
+                new Point3(-half - 0.2258, -half - 0.090625, 0)   // 左下
+        );
+        MatOfPoint2f imagePoints = new MatOfPoint2f();
+        MatOfPoint2f targetPoints = new MatOfPoint2f(
+                new org.opencv.core.Point(0, 0),
+                new org.opencv.core.Point(warpWidth - 1, 0),
+                new org.opencv.core.Point(warpWidth - 1, warpHeight - 1),
+                new org.opencv.core.Point(0, warpHeight - 1)
+        );
+        Mat image_warped = new Mat();
+        List<Mat> corners = new ArrayList<>();
+        Mat markerid = new Mat();
+        Dictionary dictionary = Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250);
 
-       Aruco.detectMarkers(image, dictionary, corners, markerid);
-       if (!corners.isEmpty() && markerid.rows() > 0) {
-           Aruco.estimatePoseSingleMarkers(corners, 0.05f, cameramatrix, cameracoefficient, rvecs, tvecs);
-         //  int ids = (int) markerid.get(0, 0)[0];
-           for (int k = 0; k < markerid.rows(); k++) {
-               int ids = (int) markerid.get(k, 0)[0];
-               Log.i("markerid", "Marker ID: " + ids);
-
-           //用if来确定有识别到artag
-           if (ids ==areamarkerid) {
-               Log.i("Marker", "Marker ID: " + ids);
-
-               Mat rvecs1 = rvecs.row(k); // (1x3) Mat
-               Mat tvecs1 = tvecs.row(k); // (1x3) Mat
-               rvecs1.get(0, 0, rvecArr);
-               tvecs1.get(0, 0, tvecArr);
-               Log.i("rvec", String.format("Marker Rotation Vector (rvec): [%.4f, %.4f, %.4f]", rvecArr[0], rvecArr[1], rvecArr[2]));
-               Log.i("tvec", String.format("Marker Translation Vector (tvec): [%.4f, %.4f, %.4f] meters", tvecArr[0], tvecArr[1], tvecArr[2]));
-               Calib3d.projectPoints(objectPoints, rvecs1, tvecs1, cameramatrix, cameracoefficient, imagePoints);
-               Mat warpMat = Imgproc.getPerspectiveTransform(imagePoints, targetPoints);
-               Imgproc.warpPerspective(image, image_warped, warpMat, new Size(warpWidth, warpHeight));
-               if (image_warped.empty() || image_warped.cols() == 0 || image_warped.rows() == 0) {
-                   Log.e("Warp", "Warping failed. image_warped is empty.");
-                   return new DetectionResult("", 0, -1, false, new Mat()); // 返回空 Mat 避免后续崩溃
-               }
-               Bitmap enhancedBitmap = Bitmap.createBitmap(image_warped.cols(), image_warped.rows(), Bitmap.Config.ARGB_8888);
-               Utils.matToBitmap(image_warped, enhancedBitmap);
-               try {
-                   String[] classLabels = {"coin", "compass", "coral", "fossil", "key", "letter", "shell", "treasure_box", "crystal", "diamond", "emerald"};
-                   float confidenceThreshold = 0.5f;
-                   int[] group1Range = {0, 7};
-                   int[] group2Range = {8, 10};
-                   int group1BestClass = -1;
-                   float group1BestScore = -1f;
-                   int group1Count = 0;
-                   int group2BestClass = -1;
-                   float group2BestScore = -1f;
-                   boolean group2Detected = false;
-                   String landmark_item = "";
-
-                   MappedByteBuffer model = FileUtil.loadMappedFile(context, "best_float32_416320_ver5.tflite");
-                   Interpreter interpreter = new Interpreter(model);
-                   float[][][][] input = ImageUtils.preprocessImage(enhancedBitmap);
-                   float[][][] output = new float[1][300][6];
-                   interpreter.run(input, output);
-
-                   for (int i = 0; i < 300; i++) {
-                       float ymin = output[0][i][0];
-                       float xmin = output[0][i][1];
-                       float ymax = output[0][i][2];
-                       float xmax = output[0][i][3];
-                       float score = output[0][i][4];
-                       int classId = (int) output[0][i][5];
-
-                       if (score < confidenceThreshold) continue;
-
-                       if (classId >= group1Range[0] && classId <= group1Range[1]) {
-                           if (score > group1BestScore) {
-                               group1BestScore = score;
-                               group1BestClass = classId;
-                               group1Count = 1;
-                               Log.i("INFO", "Group1 classId = " + classId + ", score = " + score);
-                           } else if (classId == group1BestClass) {
-                               group1Count++;
-                           }
-                       } else if (classId >= group2Range[0] && classId <= group2Range[1]) {
-                           if (!group2Detected || score > group2BestScore) {
-                               group2Detected = true;
-                               group2BestScore = score;
-                               group2BestClass = classId;
-                               Log.i("INFO", "Group2 classId = " + classId + ", score = " + score);
-                           }
-                       }
-                   }
-
-                   if (group1BestClass != -1) {
-                       landmark_item = classLabels[group1BestClass];
-                       Log.i("Group1", "Class ID: " + group1BestClass + " Count: " + group1Count);
-                   } else {
-                       Log.w("Group1", "No valid detection found");
-                   }
-
-                   if (group2Detected) {
-                       Log.i("Group2", "Class ID: " + group2BestClass + " Count: 1");
-                   } else {
-                       Log.i("Group2", "No detection");
-                   }
-                   return new DetectionResult(landmark_item, group1Count, group2BestClass, group2Detected, image_warped);
-
-               } catch (IOException e) {
-                   Log.e("TFLite", "Model load failed", e);
-               } catch (Exception e) {
-                   Log.e("TFLite", "Inference failed", e);
-               }
-           }
-       }
-   }else{
-           Log.e("ARuco","fail");
-       }
-               // 如果出错就返回默认空对象
-               return new DetectionResult("", 0, -1, false, image_warped);
-           }
-
-       }
+        Aruco.detectMarkers(image, dictionary, corners, markerid);
+        if (!corners.isEmpty() && markerid.rows() > 0) {
+            Aruco.estimatePoseSingleMarkers(corners, 0.05f, cameramatrix, cameracoefficient, rvecs, tvecs);
+          //  int ids = (int) markerid.get(0, 0)[0];
 
 
+
+            for (int k = 0; k < markerid.rows(); k++) {
+                int ids = (int) markerid.get(k, 0)[0];
+                Log.i("markerid", "Marker ID: " + ids);
+
+            //用if来确定有识别到artag
+            if (ids ==areamarkerid) {
+                Log.i("Marker", "Marker ID: " + ids + "Marker rows" + markerid.rows());
+                Mat rvecs1 = rvecs.row(k); // (1x3) Mat
+                Mat tvecs1 = tvecs.row(k); // (1x3) Mat
+                rvecs1.get(0, 0, rvecArr);
+                tvecs1.get(0, 0, tvecArr);
+
+                double[] tvecArr_modified = tvecs.get(k,0);
+                tvecArr_modified[2] = 0.75;
+                Mat tvecs_modified = new Mat(3,1,CvType.CV_64F);
+                tvecs_modified.put(0,0,tvecArr_modified);
+
+                Quaternion camera_to_cinartag = new Quaternion(0.5f, 0.5f, 0.5f, 0.5f);
+                Mat distance_to_center = new Mat(3,1,CvType.CV_64F);
+                distance_to_center.put(0,0,0.1325, 0.0375, 0);
+                Mat r_c_ct = Convert2RotationMatrix.quaternionToRotationMatrix(camera_to_cinartag);
+                Mat r_ct_t = new Mat();
+                Log.i("RotationMatrix", "rvecs1 size: " + rvecs1.rows() + " x " + rvecs1.cols());
+                Calib3d.Rodrigues(rvecs1,r_ct_t);
+                Mat r_ct_t_inv = new Mat();
+                Core.transpose(r_ct_t,r_ct_t_inv);
+                Mat t_tct_t_to_center = new Mat();
+                Core.gemm(r_ct_t_inv, tvecs_modified, -1, distance_to_center, 1, t_tct_t_to_center); //first
+                //second
+                Mat r_c_t = new Mat();
+                Core.gemm(r_c_ct, r_ct_t, 1, new Mat(), 0, r_c_t);
+                Mat t_ctt_c_center = new Mat();
+                Core.gemm(r_c_t, t_tct_t_to_center,-1,new Mat(),0,t_ctt_c_center); //third
+                Mat r_w_c = R;
+                Mat t_wt_w = new Mat();
+                Core.gemm(r_w_c, t_ctt_c_center,1, P,1, t_wt_w);
+
+
+
+
+
+                //Mat targetposition = new Mat();
+
+               // Core.gemm(R, tvecs_modified, 1, new Mat(), 0, targetposition);
+                //Mat truetargetposition = new Mat(1,3,CvType.CV_64F);
+                if (t_wt_w.empty()) {
+                    Log.e("ERROR", "targetposition is empty!");
+                }
+                if (P.empty()) {
+                    Log.e("ERROR", "targetposition is empty!");
+                }
+
+                Log.i("rvec", String.format("Marker Rotation Vector (rvec): [%.4f, %.4f, %.4f]", rvecArr[0], rvecArr[1], rvecArr[2]));
+                Log.i("tvec", String.format("Marker Translation Vector (tvec): [%.4f, %.4f, %.4f] meters", tvecArr[0], tvecArr[1], tvecArr[2]));
+
+                Calib3d.projectPoints(objectPoints, rvecs1, tvecs1, cameramatrix, cameracoefficient, imagePoints);
+                Mat warpMat = Imgproc.getPerspectiveTransform(imagePoints, targetPoints);
+                Imgproc.warpPerspective(image, image_warped, warpMat, new Size(warpWidth, warpHeight));
+                if (image_warped.empty() || image_warped.cols() == 0 || image_warped.rows() == 0) {
+                    Log.e("Warp", "Warping failed. image_warped is empty.");
+                    return new DetectionResult("", 0, -1, false, new Mat(),null,null,new Mat()); // 返回空 Mat 避免后续崩溃
+                }
+                Bitmap enhancedBitmap = Bitmap.createBitmap(image_warped.cols(), image_warped.rows(), Bitmap.Config.ARGB_8888);
+                Utils.matToBitmap(image_warped, enhancedBitmap);
+                try {
+                    String[] classLabels = {"coin", "compass", "coral", "fossil", "key", "letter", "shell", "treasure_box", "crystal", "diamond", "emerald"};
+                    float confidenceThreshold = 0.5f;
+                    int[] group1Range = {0, 7};
+                    int[] group2Range = {8, 10};
+                    int group1BestClass = -1;
+                    float group1BestScore = -1f;
+                    int group1Count = 0;
+                    int group2BestClass = -1;
+                    float group2BestScore = -1f;
+                    boolean group2Detected = false;
+                    String landmark_item = "";
+
+                    MappedByteBuffer model = FileUtil.loadMappedFile(context, "best_float32_416320_ver5.tflite");
+                    Interpreter interpreter = new Interpreter(model);
+                    float[][][][] input = ImageUtils.preprocessImage(enhancedBitmap);
+                    float[][][] output = new float[1][300][6];
+                    interpreter.run(input, output);
+
+                    for (int i = 0; i < 20; i++) {
+                        float score = output[0][i][4];
+                        int classId = (int) output[0][i][5];
+
+                        if (score < confidenceThreshold) continue;
+
+                        if (classId >= group1Range[0] && classId <= group1Range[1]) {
+                            if (score > group1BestScore) {
+                                group1BestScore = score;
+                                group1BestClass = classId;
+                                group1Count = 1;
+                                Log.i("INFO", "Group1 classId = " + classId + ", score = " + score);
+                            } else if (classId == group1BestClass) {
+                                group1Count++;
+                            }
+                        } else if (classId >= group2Range[0] && classId <= group2Range[1]) {
+                            if (!group2Detected || score > group2BestScore) {
+                                group2Detected = true;
+                                group2BestScore = score;
+                                group2BestClass = classId;
+                                Log.i("INFO", "Group2 classId = " + classId + ", score = " + score);
+                            }
+                        }
+                    }
+
+                    if (group1BestClass != -1) {
+                        landmark_item = classLabels[group1BestClass];
+                        Log.i("Group1", "Class ID: " + group1BestClass + " Count: " + group1Count);
+                    } else {
+                        Log.w("Group1", "No valid detection found");
+                    }
+
+                    if (group2Detected) {
+                        Log.i("Group2", "Class ID: " + group2BestClass + " Count: 1");
+                    } else {
+                        Log.i("Group2", "No detection");
+                    }
+                    return new DetectionResult(landmark_item, group1Count, group2BestClass, group2Detected, image_warped,rvecArr,tvecArr,t_wt_w);
+
+                } catch (IOException e) {
+                    Log.e("TFLite", "Model load failed", e);
+                } catch (Exception e) {
+                    Log.e("TFLite", "Inference failed", e);
+                }
+            }
+        }
+    }else{
+            Log.e("ARuco","fail");
+        }
+                // 如果出错就返回默认空对象
+                return new DetectionResult("", 0, -1, false, new Mat(),null,null, new Mat());
+            }
+
+        }
 
 
